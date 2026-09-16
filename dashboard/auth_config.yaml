@@ -3,7 +3,7 @@ credentials:
     admin:
       email: admin@tatkhalsa.in
       name: Tatkhalsa Admin
-      password: $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewdBPj/RK.PZvO.S  # password: Tatkhalsa@2024!
+      password: $2b$12$zJGev6Mp8UF.7y9Y8/Gu8OoDXfuSR5ijb8yLvYkM2GBMCTqDnIm0G  # password: Tatkhalsa@2024!
 cookie:
   name: tatkhalsa_agency_auth
   key: tatkhalsa_agency_secret_key_2024_change_this_in_production
