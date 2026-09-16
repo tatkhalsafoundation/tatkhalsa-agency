@@ -428,21 +428,30 @@ async def health_check(request):
         "tasks_in_progress": len([p for p in agency.state["agency"]["projects"] if p.get("status") == "in_progress"])
     })
 
-async def start_http_server():
+async def start_internal_servers():
+    """Bind the HTTP health server and WebSocket server to loopback ONLY.
+    Streamlit (the public proxy target) is the sole internet-facing process.
+    Railway routes all public traffic to $PORT; these stay internal in the container."""
+    # Internal HTTP health server
     app = web.Application()
     app.router.add_get('/health', health_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8766)
+    site = web.TCPSite(runner, '127.0.0.1', 8766)
     await site.start()
-    print("✅ HTTP health server running on http://0.0.0.0:8766")
+    print("✅ Internal HTTP health server on http://127.0.0.1:8766")
+
+    # Internal WebSocket server
+    ws_server = await websockets.serve(websocket_handler, "127.0.0.1", 8765)
+    print("✅ Internal WebSocket server on ws://127.0.0.1:8765")
+    return ws_server
 
 # ===== MAIN =====
 async def main():
     print("🏢 Starting Tatkhalsa AI Agency...")
     
-    # Start HTTP health server
-    await start_http_server()
+    # Start internal servers (loopback only — not public)
+    ws_server = await start_internal_servers()
     
     # Start all agents
     agents = create_agents()
@@ -451,12 +460,8 @@ async def main():
     # Start task generator
     generator_task = asyncio.create_task(task_generator())
     
-    # Start WebSocket server
-    ws_server = await websockets.serve(websocket_handler, "0.0.0.0", 8765)
-    
     agency.log("INFO", "System", "Tatkhalsa AI Agency started - 24/7 mode active")
-    print("✅ Agency backend running on ws://0.0.0.0:8765")
-    print("✅ Health check on http://0.0.0.0:8766/health")
+    print("✅ Agency agents running (WebSocket + health bound to loopback)")
     
     try:
         await asyncio.gather(*agent_tasks, generator_task, ws_server.wait_closed())
