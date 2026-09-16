@@ -35,7 +35,13 @@ if auth_config:
         auth_config['cookie']['expiry_days'],
     )
     
-    name, authentication_status, username = authenticator.login(location='main')
+    # New API: login() returns None until form submitted
+    auth_result = authenticator.login(location='main')
+    
+    if auth_result is None:
+        st.stop()
+    
+    name, authentication_status, username = auth_result
     
     if authentication_status == False:
         st.error('Username/password is incorrect')
