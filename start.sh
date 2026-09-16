@@ -1,47 +1,40 @@
 #!/bin/bash
-# Start script for Tatkhalsa AI Agency
+# Start script for Tatkhalsa AI Agency (Railway-compatible)
 
 set -e
 
 echo "🏢 Starting Tatkhalsa AI Agency..."
 
-# Start backend in background
+# Railway provides $PORT (the single exposed port). Streamlit serves the dashboard.
+# If $PORT is set (Railway/Render/Heroku), run Streamlit on that port.
+# Otherwise fall back to local defaults (8501 dashboard, 8765 websocket).
+
+PORT="${PORT:-8501}"
+
+# Start backend (WebSocket + HTTP health on 8766) in background
 echo "Starting backend agency server..."
 cd /app/backend
-python agency_server.py &
+python /app/backend/agency_server.py &
 BACKEND_PID=$!
 
-# Wait for backend to start
-sleep 5
+# Wait for backend health (HTTP on 8766)
+echo "Waiting for backend health on :8766..."
+for i in $(seq 1 20); do
+    if curl -sf http://localhost:8766/health >/dev/null 2>&1; then
+        echo "✅ Backend healthy"
+        break
+    fi
+    sleep 1
+done
 
-# Check if backend is running
-if ! curl -f http://localhost:8765/health 2>/dev/null; then
-    # Try WebSocket connection test
-    python -c "
-import asyncio
-import websockets
-async def test():
-    try:
-        async with websockets.connect('ws://localhost:8765') as ws:
-            await ws.send('{\"type\": \"ping\"}')
-            resp = await ws.recv()
-            print('Backend WebSocket OK')
-    except Exception as e:
-        print('Backend not ready:', e)
-        exit(1)
-asyncio.run(test())
-" || exit 1
-fi
-
-echo "✅ Backend running on ws://localhost:8765"
-
-# Start Streamlit dashboard
-echo "Starting Streamlit dashboard..."
+# Start Streamlit dashboard on $PORT (streams real-time via WebSocket to backend)
+echo "Starting Streamlit dashboard on port $PORT..."
 cd /app/dashboard
-exec streamlit run agency_dashboard.py \
-    --server.port=8501 \
+export STREAMLIT_SERVER_PORT=$PORT
+export STREAMLIT_SERVER_ADDRESS=0.0.0.0
+export STREAMLIT_SERVER_HEADLESS=true
+exec python -m streamlit run agency_dashboard.py \
+    --server.port=$PORT \
     --server.address=0.0.0.0 \
     --server.headless=true \
-    --server.enableCORS=false \
-    --server.enableXsrfProtection=false \
     --browser.gatherUsageStats=false
