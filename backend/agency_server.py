@@ -11,8 +11,9 @@ from enum import Enum
 import websockets
 from aiohttp import web
 
-STATE_FILE = os.path.expanduser("~/tatkhalsa-agency/state/agency_state.json")
-LOG_FILE = os.path.expanduser("~/tatkhalsa-agency/logs/agency.log")
+STATE_BASE = "/app" if os.path.isdir("/app") else os.path.expanduser("~/tatkhalsa-agency")
+STATE_FILE = os.path.join(STATE_BASE, "state", "agency_state.json")
+LOG_FILE = os.path.join(STATE_BASE, "logs", "agency.log")
 
 # Token pricing (approximate)
 TOKEN_PRICING = {
@@ -395,76 +396,34 @@ async def task_generator():
         agency.log("INFO", "System", f"New task assigned to {agent_id}: {desc}")
 
 # ===== WEBSOCKET SERVER =====
-async def websocket_handler(websocket):
-    await agency.register_client(websocket)
-    try:
-        async for message in websocket:
-            try:
-                data = json.loads(message)
-                if data.get("type") == "assign_task":
-                    task = AgentTask(
-                        id=str(uuid.uuid4())[:8],
-                        agent_id=data["agent_id"],
-                        department=data["department"],
-                        description=data["description"],
-                        status="assigned",
-                        created_at=datetime.now().isoformat()
-                    )
-                    agency.add_task(task)
-            except:
-                pass
-    except:
-        pass
-    finally:
-        await agency.unregister_client(websocket)
-
-# ===== HTTP HEALTH CHECK =====
-async def health_check(request):
-    return web.json_response({
-        "status": "healthy",
-        "uptime": int(time.time() - agency.start_time),
-        "agents": len([a for d in agency.state["agency"]["departments"].values() for a in d["agents"].values()]),
-        "tasks_pending": len([p for p in agency.state["agency"]["projects"] if p.get("status") == "assigned"]),
-        "tasks_in_progress": len([p for p in agency.state["agency"]["projects"] if p.get("status") == "in_progress"])
-    })
-
-async def start_internal_servers():
-    """Bind the HTTP health server and WebSocket server to loopback ONLY.
-    Streamlit (the public proxy target) is the sole internet-facing process.
-    Railway routes all public traffic to $PORT; these stay internal in the container."""
-    # Internal HTTP health server
-    app = web.Application()
-    app.router.add_get('/health', health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '127.0.0.1', 8766)
-    await site.start()
-    print("✅ Internal HTTP health server on http://127.0.0.1:8766")
-
-    # Internal WebSocket server
-    ws_server = await websockets.serve(websocket_handler, "127.0.0.1", 8765)
-    print("✅ Internal WebSocket server on ws://127.0.0.1:8765")
-    return ws_server
+# (Removed — the dashboard reads state from the shared JSON file, so no
+#  network-facing backend is needed. Streamlit is the ONLY internet-facing
+#  process, which guarantees the public URL lands on the dashboard.)
 
 # ===== MAIN =====
 async def main():
-    print("🏢 Starting Tatkhalsa AI Agency...")
-    
-    # Start internal servers (loopback only — not public)
-    ws_server = await start_internal_servers()
-    
+    print("🏢 Starting Tatkhalsa AI Agency (file-based daemon, no network servers)...")
+
     # Start all agents
     agents = create_agents()
     agent_tasks = [asyncio.create_task(a.run_loop()) for a in agents]
-    
+
     # Start task generator
     generator_task = asyncio.create_task(task_generator())
-    
-    agency.log("INFO", "System", "Tatkhalsa AI Agency started - 24/7 mode active")
-    print("✅ Agency agents running (WebSocket + health bound to loopback)")
-    
+
+    # Keep state file flushed as agents run
+    async def state_writer():
+        while agency.running:
+            agency.save_state()
+            await asyncio.sleep(2)
+
+    writer_task = asyncio.create_task(state_writer())
+
+    agency.log("INFO", "System", "Tatkhalsa AI Agency started - daemon mode active")
+    print("✅ Agency agents running (state shared via JSON file for dashboard)")
+
     try:
-        await asyncio.gather(*agent_tasks, generator_task, ws_server.wait_closed())
+        await asyncio.gather(*agent_tasks, generator_task, writer_task)
     except KeyboardInterrupt:
         agency.running = False
         for a in agents:
